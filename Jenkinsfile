@@ -19,15 +19,10 @@ pipeline {
                 }
             }
         }        
-        stage("Clear all running docker containers") {
+        stage("Clear this project's docker containers") {
             steps {
-                script {
-                    try {
-                        sh 'docker rm -f $(docker ps -a -q)'
-                    } catch (Exception e) {
-                        echo 'No running container to clear up...'
-                    }
-                }
+                // Only removes this project's containers, not every container on the machine
+                sh 'docker compose down --remove-orphans || true'
             }
         }
         stage("Start Docker") {
@@ -43,9 +38,8 @@ pipeline {
         }
         stage("Populate .env file") {
             steps {
-                dir("/var/lib/jenkins/workspace/envs/laravel-test") {
-                    fileOperations([fileCopyOperation(excludes: '', flattenFiles: true, includes: '.env', targetLocation: "${WORKSPACE}")])
-                }
+                // Keep the real .env outside git, in $JENKINS_HOME/workspace/envs/laravel-test/.env
+                sh 'cp "$JENKINS_HOME/workspace/envs/laravel-test/.env" "$WORKSPACE/.env"'
             }
         }              
         stage("Run Tests") {
@@ -56,11 +50,10 @@ pipeline {
     }
     post {
         success {
-            sh 'cd "/var/lib/jenkins/workspace/LaravelTest"'
             sh 'rm -rf artifact.zip'
-            sh 'zip -r artifact.zip . -x "*node_modules**"'
+            sh 'zip -r artifact.zip . -x "*node_modules**" -x ".git/*"'
             withCredentials([sshUserPrivateKey(credentialsId: "aws-ec2", keyFileVariable: 'keyfile')]) {
-                sh 'scp -v -o StrictHostKeyChecking=no -i ${keyfile} /var/lib/jenkins/workspace/LaravelTest/artifact.zip ec2-user@13.40.116.143:/home/ec2-user/artifact'
+                sh 'scp -v -o StrictHostKeyChecking=no -i ${keyfile} "$WORKSPACE/artifact.zip" ec2-user@13.40.116.143:/home/ec2-user/artifact'
             }
             sshagent(credentials: ['aws-ec2']) {
                 sh 'ssh -o StrictHostKeyChecking=no ec2-user@13.40.116.143 unzip -o /home/ec2-user/artifact/artifact.zip -d /var/www/html'
